@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import json
@@ -16,13 +17,15 @@ CSV_TABLE_DIR = os.path.join("..", "data", "csv_table")
 
 
 class Entity:
-    def __init__(self, entity_id: int, value: str, entity_type: str):
+    def __init__(self, sentence_id_list: List[str], entity_id: int, value: str, entity_type: str, desc: List[str]):
+        self.sentence_id_list = sentence_id_list
         self.entity_id = entity_id
 
         tmp = value.split(" ")
         self.value = "".join(tmp)
 
         self.entity_type = entity_type
+        self.entity_descriptions = desc
 
     def equal(self, other) -> bool:
         if self.value != other.value:
@@ -31,24 +34,38 @@ class Entity:
         if self.entity_type != other.entity_type:
             return False
 
+        for i in other.sentence_id_list:
+            self.sentence_id_list.append(i)
+
+        for i in other.entity_descriptions:
+            self.entity_descriptions.append(i)
+
         return True
 
 
 class Relation:
-    def __init__(self, sub: Entity, obj: Entity, name: str):
+    def __init__(self, sentence_id_list: List[str], sub: Entity, obj: Entity, name: str, desc: List[str]):
+        self.sentence_id_list = sentence_id_list
         self.subjects = sub
         self.objects = obj
         self.relation_name = name
+        self.relation_descriptions = desc
 
     def equal(self, other) -> bool:
-        if not self.subjects.equal(other.subjects):
+        if not self.subjects == other.subjects:
             return False
 
-        if not self.objects.equal(other.objects):
+        if not self.objects == other.objects:
             return False
 
         if self.relation_name != other.relation_name:
             return False
+
+        for i in other.sentence_id_list:
+            self.sentence_id_list.append(i)
+
+        for i in other.relation_descriptions:
+            self.relation_descriptions.append(i)
 
         return True
 
@@ -90,19 +107,34 @@ def convert_dict_list_to_class(dict_list: List[Dict]) -> (List[Entity], List[Rel
         if len(entities) == 0:
             continue
 
+        entity_descriptions = []
+        relation_descriptions = []
         for entity in entities:
             start = int(entity['start_offset'])
             end = int(entity['end_offset'])
-            entity_list.append(
-                Entity(int(entity['id']), text[start:end], entity['label'])
-            )
+            if entity['label'] == "实体描述":
+                entity_descriptions.append(text[start:end])
+
+            if entity['label'] == "关系描述":
+                relation_descriptions.append(text[start:end])
+
+        for entity in entities:
+            start = int(entity['start_offset'])
+            end = int(entity['end_offset'])
+
+            if entity['label'] not in ["实体描述", "关系描述"]:
+                desc = list()
+                entity_list.append(
+                    Entity([str(dic['id'])], int(entity['id']), text[start:end], entity['label'], copy.deepcopy(desc))
+                )
 
         relations = dic['relations']
         for relation in relations:
             sub = get_entity_name_by_id(relation['to_id'], entity_list)
             obj = get_entity_name_by_id(relation['from_id'], entity_list)
+            desc = list()
             relation_list.append(
-                Relation(sub, obj, relation['type'])
+                Relation([str(dic['id'])], sub, obj, relation['type'], copy.deepcopy(desc))
             )
 
     return entity_list, relation_list
@@ -116,36 +148,63 @@ def get_entity_name_by_id(entity_id: int, entity_list: List[Entity]) -> Entity:
 
 def save_entity_set_to_csv(entity_list: List[Entity], save_path: str):
     entity_dict = dict()
+    desc_max_len = 0
     for en in entity_list:
+        if len(en.entity_descriptions) > desc_max_len:
+            desc_max_len = len(en.entity_descriptions)
+
         if en.entity_type not in entity_dict:
             entity_dict[en.entity_type] = list()
-        entity_dict[en.entity_type].append(en.value)
+        entity_dict[en.entity_type].append({
+            "sentence_id": "-".join(en.sentence_id_list),
+            "value": en.value,
+            "descriptions": ",".join(en.entity_descriptions)
+        })
 
-    with open(save_path, 'w') as f:
-        content = "entity_type,value\n"
+    with open(save_path, 'w', encoding='utf-8') as f:
+        content = "sentence_id,entity_type,value,"
+        for i in range(desc_max_len):
+            content += "description" + str(i) + ","
+        content += "\n"
+
         for entity_type in entity_dict:
-            for value in entity_dict[entity_type]:
-                content += entity_type + "," + value + "\n"
+            for item in entity_dict[entity_type]:
+                content += item['sentence_id'] + "," + entity_type + "," + item['value'] + "," + item['descriptions'] + "\n"
         f.write(content)
 
 
 def save_relation_set_to_csv(relation_list: List[Relation], save_path: str):
     relation_dict = dict()
+    desc_max_len = 0
     for re in relation_list:
+        if re.subjects is None or re.objects is None:
+            continue
+
+        if len(re.relation_descriptions) > desc_max_len:
+            desc_max_len = len(re.relation_descriptions)
+
         if re.relation_name not in relation_dict:
             relation_dict[re.relation_name] = list()
         relation_dict[re.relation_name].append({
+            "sentence_id": "-".join(re.sentence_id_list),
             "subject_type": re.subjects.entity_type,
             "subject": re.subjects.value,
             "object_type": re.objects.entity_type,
             "object": re.objects.value,
+            "descriptions": ",".join(re.relation_descriptions)
         })
 
-    with open(save_path, 'w') as f:
-        content = "relation_type,subject_type,subject,object_type,object\n"
+    with open(save_path, 'w', encoding='utf-8') as f:
+        content = "sentence_id,object_type,object,relation_type,subject_type,subject,"
+        for i in range(desc_max_len):
+            content += "description" + str(i) + ","
+        content += "\n"
+
         for relation_type in relation_dict:
             for item in relation_dict[relation_type]:
-                content += relation_type + "," + item['subject_type'] + "," + item['subject'] + "," + item['object_type'] + "," + item['object'] + "\n"
+                content += item['sentence_id'] + "," + item['object_type'] + "," + item['object'] + ","
+                content += relation_type + "," + item['subject_type'] + "," + item['subject'] + ","
+                content += item['descriptions'] + "\n"
         f.write(content)
 
 
@@ -158,7 +217,7 @@ def deduplication_entity_list(entity_list: List[Entity]) -> List[Entity]:
     for old_index in range(1, len(entity_list)):
         flag = True
         for item in new_list:
-            if entity_list[old_index].equal(item):
+            if item.equal(entity_list[old_index]):
                 flag = False
                 break
         if flag:
@@ -176,7 +235,7 @@ def deduplication_relation_list(relation_list: List[Relation]) -> List[Relation]
     for old_index in range(1, len(relation_list)):
         flag = True
         for item in new_list:
-            if relation_list[old_index].equal(item):
+            if item.equal(relation_list[old_index]):
                 flag = False
                 break
         if flag:
