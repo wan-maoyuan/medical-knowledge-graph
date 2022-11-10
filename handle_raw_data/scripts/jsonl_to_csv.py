@@ -123,18 +123,16 @@ def convert_dict_list_to_class(dict_list: List[Dict]) -> (List[Entity], List[Rel
             end = int(entity['end_offset'])
 
             if entity['label'] not in ["实体描述", "关系描述"]:
-                desc = list()
                 entity_list.append(
-                    Entity([str(dic['id'])], int(entity['id']), text[start:end], entity['label'], copy.deepcopy(desc))
+                    Entity([str(dic['id'])], int(entity['id']), text[start:end], entity['label'], copy.deepcopy(entity_descriptions))
                 )
 
         relations = dic['relations']
         for relation in relations:
             sub = get_entity_name_by_id(relation['to_id'], entity_list)
             obj = get_entity_name_by_id(relation['from_id'], entity_list)
-            desc = list()
             relation_list.append(
-                Relation([str(dic['id'])], sub, obj, relation['type'], copy.deepcopy(desc))
+                Relation([str(dic['id'])], sub, obj, relation['type'], copy.deepcopy(relation_descriptions))
             )
 
     return entity_list, relation_list
